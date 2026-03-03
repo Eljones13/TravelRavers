@@ -47,7 +47,13 @@
     },
     "plugins": [
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsDownloadToken": "MAPBOX_DOWNLOADS_TOKEN"
+        }
+      ]
     ],
     "extra": {
       "eas": {
