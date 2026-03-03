@@ -42,3 +42,4 @@ yarn-error.*
 Library/
 node_modules/
 .expo/
+src/config/MapboxConfig.ts

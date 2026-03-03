@@ -1,6 +1,6 @@
 export const colours = {
   bg: '#03060f',
-  bgPanel: 'rgba(4,10,22,0.82)',
+  bgPanel: 'rgba(2,6,16,0.92)',
   cyan: '#00f5ff',
   magenta: '#ff00ff',
   green: '#00ff88',
@@ -10,8 +10,9 @@ export const colours = {
   blue: '#4488ff',
   text: '#c8e8ff',
   dim: '#3a6a88',
-  glassBg: 'rgba(0,245,255,0.025)',
-  glassBorder: 'rgba(0,245,255,0.15)',
+  glassBg: 'rgba(8,20,40,0.55)',
+  glassBorder: 'rgba(0,245,255,0.22)',
+  glassHighlight: 'rgba(0,245,255,0.08)',
 };
 
 export const glassPanel = {

@@ -1,14 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, StyleSheet } from 'react-native';
+import { Modal, View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle, Line, Path, Rect, Polyline, Polygon } from 'react-native-svg';
 import { colours } from '../theme/colours';
-import { EventsScreen } from '../screens/EventsScreen';
+import { FestivalSelectScreen } from '../screens/FestivalSelectScreen';
 import { RadarScreen } from '../screens/RadarScreen';
 import { MapScreen } from '../screens/MapScreen';
 import { TimetableScreen } from '../screens/TimetableScreen';
 import { KitScreen } from '../screens/KitScreen';
 import { SOSScreen } from '../screens/SOSScreen';
+import { SquadSetupScreen } from '../screens/SquadSetupScreen';
+import { useSquadProfileStore } from '../stores/squadProfileStore';
+import * as Haptics from 'expo-haptics';
 
 const Tab = createBottomTabNavigator();
 
@@ -79,6 +82,20 @@ function TabLabel({ label, color }: { label: string; color: string }) {
   );
 }
 
+function RadarTabScreen() {
+  const { hasSetup } = useSquadProfileStore();
+  const [setupDone, setSetupDone] = useState(hasSetup);
+
+  if (!setupDone) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colours.bg }}>
+        <SquadSetupScreen onComplete={() => setSetupDone(true)} />
+      </View>
+    );
+  }
+  return <RadarScreen />;
+}
+
 export function AppNavigator() {
   return (
     <Tab.Navigator
@@ -89,10 +106,15 @@ export function AppNavigator() {
         tabBarInactiveTintColor: colours.dim,
         tabBarShowLabel: false,
       }}
+      screenListeners={{
+        tabPress: () => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        },
+      }}
     >
       <Tab.Screen
         name="Events"
-        component={EventsScreen}
+        component={FestivalSelectScreen}
         options={{
           tabBarIcon: ({ color }) => (
             <View style={styles.tabItem}>
@@ -104,7 +126,7 @@ export function AppNavigator() {
       />
       <Tab.Screen
         name="Radar"
-        component={RadarScreen}
+        component={RadarTabScreen}
         options={{
           tabBarIcon: ({ color }) => (
             <View style={styles.tabItem}>
@@ -186,6 +208,7 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontFamily: 'ShareTechMono_400Regular',
     fontSize: 8,
-    letterSpacing: 1.5,
+    letterSpacing: 2,
+    marginTop: 2,
   },
 });

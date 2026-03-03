@@ -5,17 +5,23 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#030614",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#030614"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "y",
+      "bundleIdentifier": "com.eljones13.travelravers",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSBluetoothAlwaysUsageDescription": "TravelRavers uses Bluetooth for offline mesh networking to stay in sync with your squad without cell signal.",
+        "NSBluetoothPeripheralUsageDescription": "TravelRavers uses Bluetooth for offline mesh networking.",
+        "NSLocationWhenInUseUsageDescription": "We need your location to show where you are on the festival map and help your squad find you.",
+        "NSLocationAlwaysUsageDescription": "We need background location access so your squad can see where you are even when the app is minimised.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "TravelRavers needs location access to show your position on the tactical map and share it with your squad."
       }
     },
     "android": {
@@ -25,14 +31,23 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "package": "com.eljones13.TravelRavers"
+      "package": "com.eljones13.travelravers",
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_ADVERTISE",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-asset"
     ],
     "extra": {
       "eas": {

@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated,
-  Modal, Pressable, Dimensions
+  Modal, Pressable, Dimensions, Linking, RefreshControl
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { colours } from '../theme/colours';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { useFestivalStore } from '../stores/festivalStore';
@@ -47,15 +48,20 @@ function DJModal({ artist, onClose }: DJModalProps) {
 
   if (!profile || !artist) return null;
 
-  function VibeMeter({ label, value, color, icon }: { label: string; value: number; color: string; icon: string }) {
+  function VibeMeter({ label, value, colors, icon }: { label: string; value: number; colors: string[]; icon: string }) {
     return (
       <View style={{ marginBottom: 8 }}>
         <View style={styles.meterHeader}>
           <Text style={styles.meterLabel}>{icon} {label}</Text>
-          <Text style={[styles.meterVal, { color }]}>{value}%</Text>
+          <Text style={[styles.meterVal, { color: colors[0] }]}>{value}%</Text>
         </View>
         <View style={styles.meterTrack}>
-          <View style={[styles.meterFill, { width: `${value}%`, backgroundColor: color }]} />
+          <LinearGradient
+            colors={colors as any}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.meterFill, { width: `${value}%` }]}
+          />
         </View>
       </View>
     );
@@ -124,9 +130,9 @@ function DJModal({ artist, onClose }: DJModalProps) {
               {/* Vibe meters */}
               <View style={styles.vibeSection}>
                 <Text style={styles.vibeTitle}>VIBE ANALYSIS // REAL-TIME</Text>
-                <VibeMeter label="ENERGY" value={profile.energy} color={colours.cyan} icon="⚡" />
-                <VibeMeter label="DARKNESS" value={profile.darkness} color={colours.magenta} icon="🌑" />
-                <VibeMeter label="WEIRDNESS" value={profile.weirdness} color={colours.green} icon="🌀" />
+                <VibeMeter label="ENERGY" value={profile.energy} colors={[colours.cyan, colours.magenta]} icon="⚡" />
+                <VibeMeter label="DARKNESS" value={profile.darkness} colors={[colours.magenta, '#660033']} icon="🌑" />
+                <VibeMeter label="WEIRDNESS" value={profile.weirdness} colors={[colours.green, '#006644']} icon="🌀" />
               </View>
 
               {/* Safety scores */}
@@ -147,14 +153,20 @@ function DJModal({ artist, onClose }: DJModalProps) {
                 </View>
               </View>
 
-              {/* Tracks */}
+              {/* Tracks with Spotify preview */}
               <View style={styles.tracksSection}>
-                <Text style={styles.tracksTitle}>SIGNATURE TRACKS</Text>
+                <Text style={styles.tracksTitle}>PREVIEW TRACKS // TAP TO SEARCH</Text>
                 <View style={styles.tracksRow}>
                   {profile.tracks.map((t) => (
-                    <View key={t} style={styles.trackChip}>
+                    <TouchableOpacity
+                      key={t}
+                      style={styles.trackChip}
+                      onPress={() => Linking.openURL(`https://open.spotify.com/search/${encodeURIComponent(t + ' ' + artist)}`)}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={styles.trackPlayIcon}>▶ </Text>
                       <Text style={styles.trackText}>{t}</Text>
-                    </View>
+                    </TouchableOpacity>
                   ))}
                 </View>
               </View>
@@ -176,30 +188,63 @@ function DJModal({ artist, onClose }: DJModalProps) {
   );
 }
 
+import { useTimetableStore } from '../stores/timetableStore';
+import { meshService } from '../services/MeshService';
+import { checkConflict } from '../utils/scheduleUtils';
+import { useSquadStore } from '../stores/squadStore';
+
+// ... (existing IconRadar, etc. - I'll keep the imports clean)
+
 export function TimetableScreen() {
   const { festival } = useFestivalStore();
+  const { interests, toggleInterest, getInterestedPeers } = useTimetableStore();
+  const { members } = useSquadStore();
   const [day, setDay] = useState<keyof typeof TIMETABLE>('thu');
   const [selectedDJ, setSelectedDJ] = useState<string | null>(null);
-  const [favs, setFavs] = useState<Set<string>>(new Set(['JOHN SUMMIT', 'CHARLOTTE DE WITTE', 'RICHIE HAWTIN']));
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    // Simulate a timetable refresh (would fetch from server when online)
+    setTimeout(() => setRefreshing(false), 1200);
+  }, []);
 
   const stages: StageData[] = TIMETABLE[day] ?? [];
 
-  function toggleFav(artist: string) {
-    setFavs((prev) => {
-      const next = new Set(prev);
-      next.has(artist) ? next.delete(artist) : next.add(artist);
-      return next;
-    });
-  }
+  const handleToggleFav = (artist: string) => {
+    toggleInterest(artist);
+    // Broadcast updated interests to squad
+    const nextInterests = new Set(useTimetableStore.getState().interests);
+    meshService.broadcastSchedule(Array.from(nextInterests));
+  };
+
+  // Flatten all sets for conflict checking
+  const allSets = useMemo(() => {
+    return Object.values(TIMETABLE).flatMap(stageList =>
+      stageList.flatMap(stage => stage.sets)
+    );
+  }, []);
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colours.cyan}
+            colors={[colours.cyan]}
+          />
+        }
+      >
         <ScreenHeader
           title="TIMETABLE"
           subtitle={`${festival.name} // ALL STAGES`}
-          badgeLabel="OFFLINE"
-          badgeColor={colours.green}
+          badgeLabel="SQUAD SYNC"
+          badgeColor={colours.cyan}
         />
 
         {/* Day tabs */}
@@ -226,26 +271,57 @@ export function TimetableScreen() {
                 <Text style={[styles.stageName, { color: stage.color }]}>{stage.stage}</Text>
               </View>
 
-              {stage.sets.map((set) => (
-                <TouchableOpacity
-                  key={`${stage.stage}-${set.time}`}
-                  style={[styles.setRow, { borderLeftColor: stage.color }, set.now && styles.setRowNow]}
-                  onPress={() => setSelectedDJ(set.artist)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.setTime, { color: stage.color }]}>{set.time}</Text>
-                  <View style={styles.setArtist}>
-                    <Text style={styles.setName}>{set.artist}</Text>
-                    <Text style={styles.setGenre}>{set.genre}</Text>
-                  </View>
-                  {set.now && <Text style={[styles.nowBadge, { color: colours.green }]}>NOW</Text>}
-                  <TouchableOpacity onPress={() => toggleFav(set.artist)}>
-                    <Text style={[styles.favStar, favs.has(set.artist) && styles.favStarActive]}>
-                      {favs.has(set.artist) ? '⭐' : '☆'}
-                    </Text>
+              {stage.sets.map((set) => {
+                const isInterested = interests.has(set.artist);
+                const interestedPeers = getInterestedPeers(set.artist);
+
+                // Check for conflicts
+                const hasConflict = isInterested && Array.from(interests).some(otherId => {
+                  if (otherId === set.artist) return false;
+                  return checkConflict(set.artist, otherId, allSets);
+                });
+
+                return (
+                  <TouchableOpacity
+                    key={`${stage.stage}-${set.time}`}
+                    style={[
+                      styles.setRow,
+                      { borderLeftColor: stage.color },
+                      set.now && styles.setRowNow,
+                      hasConflict && styles.setRowConflict
+                    ]}
+                    onPress={() => setSelectedDJ(set.artist)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.setTime, { color: stage.color }]}>{set.time.split(' - ')[0]}</Text>
+                    <View style={styles.setArtist}>
+                      <View style={styles.setNameRow}>
+                        <Text style={styles.setName}>{set.artist}</Text>
+                        {hasConflict && <Text style={styles.conflictIcon}>⚠️</Text>}
+                      </View>
+                      <View style={styles.squadTrack}>
+                        {interestedPeers.map(peerId => {
+                          const peer = members[peerId];
+                          if (!peer) return null;
+                          return (
+                            <View key={peerId} style={[styles.miniAvatar, { borderColor: colours.cyan }]}>
+                              <Text style={styles.miniAvatarText}>{peer.name.charAt(0)}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    {set.now && <Text style={[styles.nowBadge, { color: colours.green }]}>NOW</Text>}
+
+                    <TouchableOpacity onPress={() => handleToggleFav(set.artist)}>
+                      <Text style={[styles.favStar, isInterested && styles.favStarActive]}>
+                        {isInterested ? '⭐' : '☆'}
+                      </Text>
+                    </TouchableOpacity>
                   </TouchableOpacity>
-                </TouchableOpacity>
-              ))}
+                );
+              })}
             </View>
           ))}
         </View>
@@ -257,7 +333,7 @@ export function TimetableScreen() {
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
+  scroll: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: 24 },
   dayTabs: { flexDirection: 'row', gap: 6, paddingHorizontal: 16, marginBottom: 12 },
   dayTab: {
@@ -300,9 +376,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,245,255,0.07)',
     borderColor: 'rgba(0,245,255,0.3)',
   },
+  setRowConflict: {
+    borderColor: 'rgba(255,34,68,0.4)',
+    backgroundColor: 'rgba(255,34,68,0.06)',
+  },
   setTime: { fontFamily: 'ShareTechMono_400Regular', fontSize: 11, minWidth: 42, letterSpacing: 1 },
-  setArtist: { flex: 1 },
+  setArtist: { flex: 1, gap: 4 },
+  setNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   setName: { fontFamily: 'ShareTechMono_400Regular', fontSize: 13, color: colours.text, letterSpacing: 1, fontWeight: '600' },
+  conflictIcon: { fontSize: 10 },
+  squadTrack: { flexDirection: 'row', gap: -6 },
+  miniAvatar: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, backgroundColor: 'rgba(3,8,20,1)', alignItems: 'center', justifyContent: 'center' },
+  miniAvatarText: { color: colours.cyan, fontSize: 8, fontFamily: 'Orbitron_700Bold' },
   setGenre: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, color: colours.dim, letterSpacing: 1, marginTop: 1 },
   nowBadge: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, letterSpacing: 2 },
   favStar: { fontSize: 14, color: colours.dim },
@@ -347,7 +432,8 @@ const styles = StyleSheet.create({
   tracksSection: { paddingHorizontal: 16, paddingBottom: 16 },
   tracksTitle: { fontFamily: 'Orbitron_700Bold', fontSize: 8, letterSpacing: 3, color: colours.dim, marginBottom: 8 },
   tracksRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  trackChip: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 20, backgroundColor: 'rgba(0,245,255,0.05)', borderWidth: 1, borderColor: 'rgba(0,245,255,0.12)' },
+  trackChip: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 20, backgroundColor: 'rgba(0,245,255,0.05)', borderWidth: 1, borderColor: 'rgba(0,245,255,0.12)', flexDirection: 'row', alignItems: 'center' },
+  trackPlayIcon: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, color: colours.green },
   trackText: { fontFamily: 'ShareTechMono_400Regular', fontSize: 9, color: colours.text },
   actionRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 16 },
   actionBtn: { flex: 1, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0,245,255,0.38)', backgroundColor: 'rgba(0,245,255,0.06)', alignItems: 'center' },

@@ -1,15 +1,16 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, Easing
 } from 'react-native';
 import Svg, {
   Circle, Line, Text as SvgText, Path, Ellipse, Rect, Defs,
-  RadialGradient, Stop, Filter, FeGaussianBlur, FeMerge, FeMergeNode, G,
+  RadialGradient, Stop, G,
 } from 'react-native-svg';
 import { colours } from '../theme/colours';
 import { GlassPanel } from '../components/GlassPanel';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { useFestivalStore } from '../stores/festivalStore';
+import { useLocationStore } from '../stores/locationStore';
 
 const SQUAD = [
   { initial: 'S', name: 'SARAH', loc: 'TECHNO DOME // 400m NE // 2min ago', status: 'ACTIVE', color: colours.cyan, cx: 210, cy: 82, label: '400m NE' },
@@ -17,7 +18,51 @@ const SQUAD = [
   { initial: 'J', name: 'JESS', loc: '⚠️ LAST SEEN ACID ARENA // 22min ago', status: 'LOST', color: colours.orange, cx: 80, cy: 190, label: '600m W' },
 ];
 
-function RadarSVG({ sweep }: { sweep: Animated.Value }) {
+const MESH_MESSAGES = [
+  'SCANNING FOR SQUAD...',
+  'MESH ACTIVE // SEARCHING',
+  'NO NODES DETECTED // MOVE CLOSER',
+];
+
+function MeshStatusBar() {
+  const [msgIndex, setMsgIndex] = useState(0);
+  const [showSignal, setShowSignal] = useState(false);
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const cycle = setInterval(() => {
+      Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        setMsgIndex((i) => (i + 1) % MESH_MESSAGES.length);
+        Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      });
+    }, 3000);
+
+    // Flash "SIGNAL DETECTED" every 8 seconds
+    const signal = setInterval(() => {
+      setShowSignal(true);
+      setTimeout(() => setShowSignal(false), 1500);
+    }, 8000);
+
+    return () => {
+      clearInterval(cycle);
+      clearInterval(signal);
+    };
+  }, []);
+
+  const msg = showSignal ? 'SIGNAL DETECTED' : MESH_MESSAGES[msgIndex];
+  const color = showSignal ? colours.green : colours.dim;
+
+  return (
+    <View style={styles.meshBar}>
+      <View style={[styles.meshDot, { backgroundColor: showSignal ? colours.green : colours.cyan }]} />
+      <Animated.Text style={[styles.meshText, { opacity, color }]}>
+        {msg}
+      </Animated.Text>
+    </View>
+  );
+}
+
+function RadarSVG({ sweep, userPos }: { sweep: Animated.Value; userPos: { x: number, y: number } | null }) {
   const AnimatedG = Animated.createAnimatedComponent(G);
 
   return (
@@ -72,36 +117,52 @@ function RadarSVG({ sweep }: { sweep: Animated.Value }) {
       <SvgText x={152} y={108} fill="rgba(0,245,255,0.4)" fontSize={8} fontFamily="ShareTechMono_400Regular">500m</SvgText>
       <SvgText x={152} y={138} fill="rgba(0,245,255,0.35)" fontSize={8} fontFamily="ShareTechMono_400Regular">200m</SvgText>
 
-      {/* Sweep — static for now; animated via CSS-style workaround */}
-      <Path d="M150,150 L150,22 A128,128 0 0,1 240,68 Z" fill="url(#sweepGrad)" opacity={0.7} />
-      <Line x1={150} y1={150} x2={150} y2={22} stroke="rgba(0,245,255,0.6)" strokeWidth={1.5} />
+      {/* Sweep */}
+      <AnimatedG
+        rotation={sweep.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, 360]
+        })}
+        originX="150"
+        originY="150"
+      >
+        <Path d="M150,150 L150,22 A128,128 0 0,1 240,68 Z" fill="url(#sweepGrad)" opacity={0.7} />
+        <Line x1={150} y1={150} x2={150} y2={22} stroke="rgba(0,245,255,0.6)" strokeWidth={1.5} />
+      </AnimatedG>
+
+      {/* Squad member dots with glow rings */}
+      {SQUAD.map((m) => (
+        <G key={m.name}>
+          <Circle cx={m.cx} cy={m.cy} r={18} fill="none" stroke={m.color} strokeWidth={0.5} opacity={0.15} />
+          <Circle cx={m.cx} cy={m.cy} r={11} fill="none" stroke={m.color} strokeWidth={1} opacity={0.35} />
+          <Circle cx={m.cx} cy={m.cy} r={6} fill={m.color} opacity={0.9} />
+          {/* Avatar initial */}
+          <SvgText x={m.cx} y={m.cy - 14} fill={m.color} fontSize={8} fontFamily="Orbitron_700Bold" textAnchor="middle">{m.initial}</SvgText>
+          <SvgText x={m.cx + 13} y={m.cy - 4} fill={m.color} fontSize={7} fontFamily="ShareTechMono_400Regular">{m.name}</SvgText>
+          <SvgText x={m.cx + 13} y={m.cy + 5} fill={colours.dim} fontSize={6} fontFamily="ShareTechMono_400Regular">{m.label}</SvgText>
+          <Line x1={150} y1={150} x2={m.cx} y2={m.cy} stroke={m.color} strokeWidth={0.8} strokeDasharray="4,4" opacity={0.3} />
+        </G>
+      ))}
 
       {/* YOU dot */}
-      <Circle cx={150} cy={150} r={6} fill={colours.cyan} opacity={0.95} />
-      <Circle cx={150} cy={150} r={11} fill="none" stroke={colours.cyan} strokeWidth={1.5} opacity={0.5} />
-      <Circle cx={150} cy={150} r={20} fill="none" stroke={colours.cyan} strokeWidth={0.8} opacity={0.2} />
-      <SvgText x={158} y={144} fill={colours.cyan} fontSize={8} fontFamily="ShareTechMono_400Regular">YOU</SvgText>
+      {userPos ? (
+        <G>
+          <Circle cx={userPos.x} cy={userPos.y} r={20} fill="none" stroke={colours.cyan} strokeWidth={0.8} opacity={0.2} />
+          <Circle cx={userPos.x} cy={userPos.y} r={11} fill="none" stroke={colours.cyan} strokeWidth={1.5} opacity={0.5} />
+          <Circle cx={userPos.x} cy={userPos.y} r={6} fill={colours.cyan} opacity={0.95} />
+          <SvgText x={userPos.x + 8} y={userPos.y - 6} fill={colours.cyan} fontSize={8} fontFamily="ShareTechMono_400Regular">YOU</SvgText>
+        </G>
+      ) : (
+        <G>
+          <Circle cx={150} cy={150} r={6} fill={colours.cyan} opacity={0.3} />
+          <SvgText x={158} y={144} fill={colours.dim} fontSize={8} fontFamily="ShareTechMono_400Regular">ACQUIRING...</SvgText>
+        </G>
+      )}
 
-      {/* SARAH */}
-      <Circle cx={210} cy={82} r={6} fill={colours.magenta} />
-      <Circle cx={210} cy={82} r={11} fill="none" stroke={colours.magenta} strokeWidth={1} opacity={0.4} />
-      <SvgText x={218} y={78} fill={colours.magenta} fontSize={8} fontFamily="ShareTechMono_400Regular">SARAH</SvgText>
-      <SvgText x={218} y={88} fill={colours.dim} fontSize={7} fontFamily="ShareTechMono_400Regular">400m NE</SvgText>
-      <Line x1={150} y1={150} x2={210} y2={82} stroke={colours.magenta} strokeWidth={0.8} strokeDasharray="4,4" opacity={0.35} />
-
-      {/* MIKE */}
-      <Circle cx={162} cy={198} r={6} fill={colours.green} />
-      <Circle cx={162} cy={198} r={11} fill="none" stroke={colours.green} strokeWidth={1} opacity={0.35} />
-      <SvgText x={170} y={194} fill={colours.green} fontSize={8} fontFamily="ShareTechMono_400Regular">MIKE</SvgText>
-      <SvgText x={170} y={204} fill={colours.dim} fontSize={7} fontFamily="ShareTechMono_400Regular">150m S</SvgText>
-      <Line x1={150} y1={150} x2={162} y2={198} stroke={colours.green} strokeWidth={0.8} strokeDasharray="4,4" opacity={0.3} />
-
-      {/* BASE CAMP */}
+      {/* Base camp + medical */}
       <Rect x={24} y={162} width={8} height={8} rx={1} fill="rgba(255,255,0,0.6)" />
       <SvgText x={10} y={155} fill={colours.yellow} fontSize={7} fontFamily="ShareTechMono_400Regular">CAMP</SvgText>
       <SvgText x={14} y={165} fill={colours.dim} fontSize={7} fontFamily="ShareTechMono_400Regular">800m W</SvgText>
-
-      {/* Medical */}
       <Rect x={218} y={195} width={10} height={10} rx={2} fill="rgba(255,34,68,0.7)" />
       <SvgText x={215} y={192} fill={colours.red} fontSize={7} fontFamily="ShareTechMono_400Regular">MED</SvgText>
 
@@ -111,9 +172,41 @@ function RadarSVG({ sweep }: { sweep: Animated.Value }) {
   );
 }
 
+function ScanBar() {
+  const x = useRef(new Animated.Value(-1)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(x, { toValue: 3, duration: 2000, easing: Easing.linear, useNativeDriver: true })
+    ).start();
+  }, []);
+  return (
+    <View style={styles.scanTrack}>
+      <Animated.View style={[styles.scanFill, {
+        transform: [{ translateX: x.interpolate({ inputRange: [0, 1], outputRange: ['-100%' as any, '280%' as any] }) }]
+      }]} />
+    </View>
+  );
+}
+
 export function RadarScreen() {
   const { festival } = useFestivalStore();
+  const { coords, status } = useLocationStore();
   const sweepAnim = useRef(new Animated.Value(0)).current;
+
+  let userPos = null;
+  if (coords) {
+    const dLat = coords.latitude - festival.lat;
+    const dLng = coords.longitude - festival.lng;
+    const scale = 100 / 0.0045;
+    let dx = dLng * scale * Math.cos(festival.lat * Math.PI / 180);
+    let dy = -dLat * scale;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 128) {
+      dx = (dx / dist) * 123;
+      dy = (dy / dist) * 123;
+    }
+    userPos = { x: 150 + dx, y: 150 + dy };
+  }
 
   useEffect(() => {
     Animated.loop(
@@ -126,39 +219,55 @@ export function RadarScreen() {
     ).start();
   }, []);
 
+  const accuracy = coords?.accuracy ?? null;
+  const gpsLabel = !coords
+    ? 'GPS ACQUIRING...'
+    : accuracy && accuracy < 20
+      ? `GPS LOCKED // ±${Math.round(accuracy)}m`
+      : accuracy
+        ? `GPS WEAK // ±${Math.round(accuracy)}m`
+        : 'GPS ACQUIRING...';
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <ScreenHeader
         title={`${festival.name} // RADAR`}
-        subtitle="SNEAKERNET MESH // ACTIVE"
-        badgeLabel="OFFLINE"
-        badgeColor={colours.green}
+        subtitle={gpsLabel}
+        showGpsBadge={false}
+        badgeLabel={status === 'granted' ? (accuracy && accuracy < 20 ? 'GPS LOCKED' : 'GPS WEAK') : 'GPS OFF'}
+        badgeColor={status === 'granted' ? (accuracy && accuracy < 20 ? colours.green : colours.orange) : colours.red}
       />
 
       {/* Radar globe */}
       <View style={styles.radarWrap}>
-        <RadarSVG sweep={sweepAnim} />
+        <RadarSVG sweep={sweepAnim} userPos={userPos} />
       </View>
 
-      {/* Loading bar */}
+      {/* Scan bar */}
       <View style={styles.lbar}><ScanBar /></View>
-      <Text style={styles.meshStatus}>MESH ACTIVE // 3 NODES // SNEAKERNET PROTOCOL</Text>
+
+      {/* Mesh status cycling bar */}
+      <MeshStatusBar />
 
       {/* Squad status */}
       <GlassPanel title="SQUAD STATUS">
         {SQUAD.map((m) => (
           <View key={m.name} style={styles.member}>
-            <View style={[styles.avatar, { borderColor: m.color }]}>
+            <View style={[styles.avatar, {
+              borderColor: m.color,
+              shadowColor: m.color,
+              shadowOpacity: 0.6,
+              shadowRadius: 6,
+            }]}>
               <Text style={[styles.avatarText, { color: m.color }]}>{m.initial}</Text>
             </View>
             <View style={styles.memberInfo}>
               <Text style={styles.memberName}>{m.name}</Text>
-              <Text style={styles.memberLoc}>{m.loc}</Text>
+              <Text style={styles.memberLoc}>📍 {m.loc}</Text>
             </View>
             <View style={[
               styles.statusBadge,
-              { borderColor: m.status === 'ACTIVE' ? colours.green : colours.orange },
-              { backgroundColor: m.status === 'ACTIVE' ? 'rgba(0,255,136,0.08)' : 'rgba(255,136,0,0.08)' },
+              m.status === 'ACTIVE' ? styles.statusActive : styles.statusLost
             ]}>
               <Text style={[styles.statusText, { color: m.status === 'ACTIVE' ? colours.green : colours.orange }]}>
                 {m.status}
@@ -175,42 +284,55 @@ export function RadarScreen() {
   );
 }
 
-function ScanBar() {
-  const x = useRef(new Animated.Value(-1)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.timing(x, { toValue: 3, duration: 2000, easing: Easing.linear, useNativeDriver: true })
-    ).start();
-  }, []);
-  return (
-    <View style={styles.scanTrack}>
-      <Animated.View style={[styles.scanFill, { transform: [{ translateX: x.interpolate({ inputRange: [0, 1], outputRange: ['-100%' as any, '280%' as any] }) }] }]} />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
+  scroll: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: 16 },
   radarWrap: { alignItems: 'center', paddingVertical: 10 },
-  lbar: { marginHorizontal: 16, height: 2, overflow: 'hidden', marginBottom: 4 },
+  lbar: { marginHorizontal: 16, height: 2, overflow: 'hidden', marginBottom: 6 },
   scanTrack: { flex: 1, height: 2, backgroundColor: 'rgba(0,245,255,0.08)' },
   scanFill: { height: 2, width: '55%', backgroundColor: colours.cyan },
-  meshStatus: {
-    fontFamily: 'ShareTechMono_400Regular',
-    textAlign: 'center',
-    fontSize: 8,
-    color: colours.dim,
-    letterSpacing: 2,
+  meshBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     marginBottom: 10,
+    paddingHorizontal: 16,
   },
-  member: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(0,245,255,0.06)' },
-  avatar: { width: 38, height: 38, borderRadius: 19, borderWidth: 2, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,245,255,0.04)' },
+  meshDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  meshText: {
+    fontFamily: 'ShareTechMono_400Regular',
+    fontSize: 9,
+    letterSpacing: 2,
+  },
+  member: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,245,255,0.06)',
+  },
+  avatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,245,255,0.04)',
+  },
   avatarText: { fontFamily: 'Orbitron_700Bold', fontSize: 13 },
   memberInfo: { flex: 1 },
   memberName: { fontFamily: 'Orbitron_700Bold', fontSize: 14, color: colours.text, letterSpacing: 1 },
   memberLoc: { fontFamily: 'ShareTechMono_400Regular', fontSize: 9, color: colours.dim, marginTop: 2 },
   statusBadge: { borderWidth: 1, borderRadius: 3, paddingVertical: 2, paddingHorizontal: 8 },
+  statusActive: { borderColor: colours.green, backgroundColor: 'rgba(0,255,136,0.08)' },
+  statusLost: { borderColor: colours.orange, backgroundColor: 'rgba(255,136,0,0.08)' },
   statusText: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, letterSpacing: 2 },
   pingBtn: {
     marginHorizontal: 16,

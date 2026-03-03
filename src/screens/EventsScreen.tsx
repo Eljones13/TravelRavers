@@ -123,7 +123,7 @@ export function EventsScreen() {
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
+  scroll: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: 16 },
   filterRow: {
     flexDirection: 'row',

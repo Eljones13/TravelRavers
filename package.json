@@ -4,33 +4,56 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
     "@expo-google-fonts/orbitron": "^0.4.2",
     "@expo-google-fonts/share-tech-mono": "^0.4.1",
+    "@expo/metro-runtime": "~5.0.5",
+    "@nozbe/watermelondb": "^0.28.0",
+    "@nozbe/with-observables": "^1.6.0",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@react-navigation/bottom-tabs": "^7.15.3",
     "@react-navigation/native": "^7.1.31",
+    "@rnmapbox/maps": "^10.2.10",
     "expo": "~53.0.0",
+    "expo-asset": "~11.1.7",
     "expo-dev-client": "~5.2.4",
     "expo-font": "~13.3.2",
     "expo-haptics": "~14.1.4",
+    "expo-linear-gradient": "~14.1.5",
     "expo-location": "~18.1.6",
     "expo-splash-screen": "~0.30.10",
     "expo-status-bar": "~2.2.3",
+    "mapbox-gl": "^3.19.0",
     "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "react-native": "0.79.6",
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.11.1",
     "react-native-svg": "15.11.2",
+    "react-native-web": "^0.20.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@babel/plugin-proposal-class-properties": "^7.18.6",
+    "@babel/plugin-proposal-decorators": "^7.29.0",
+    "@babel/plugin-transform-runtime": "^7.29.0",
     "@types/react": "~19.0.10",
     "typescript": "~5.8.3"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "mapbox-gl",
+          "@nozbe/with-observables",
+          "@nozbe/watermelondb"
+        ]
+      }
+    }
+  }
 }

@@ -6,8 +6,10 @@ export interface Pin {
   emoji: string;
   label: string;
   color: string;
-  x: number; // 0–1 normalised map coords
+  x: number; // legacy normalised coords
   y: number;
+  lat?: number; // real GPS lat
+  lng?: number; // real GPS lng
   createdAt: number;
   byUser: string;
 }

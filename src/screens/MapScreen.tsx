@@ -1,62 +1,156 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, Easing
 } from 'react-native';
-import Svg, {
-  Rect, Line, Path, Circle, Text as SvgText, G
-} from 'react-native-svg';
 import { colours } from '../theme/colours';
 import { GlassPanel } from '../components/GlassPanel';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { useFestivalStore } from '../stores/festivalStore';
 import { usePinStore, Pin } from '../stores/pinStore';
+import { useLocationStore } from '../stores/locationStore';
+import { useOfflineMapStore } from '../stores/offlineMapStore';
+import { OfflineMap } from '../components/OfflineMap';
+import Mapbox from '@rnmapbox/maps';
+import * as Haptics from 'expo-haptics';
 
 const PIN_TYPES = [
-  { type: 'tent',   emoji: '⛺', color: '#00f5ff', label: 'MY TENT' },
+  { type: 'tent', emoji: '⛺', color: '#00f5ff', label: 'MY TENT' },
   { type: 'toilet', emoji: '🚽', color: '#00ff88', label: 'TOILET' },
-  { type: 'water',  emoji: '💧', color: '#4488ff', label: 'WATER' },
-  { type: 'food',   emoji: '🍕', color: '#ff8800', label: 'FOOD' },
+  { type: 'water', emoji: '💧', color: '#4488ff', label: 'WATER' },
+  { type: 'food', emoji: '🍕', color: '#ff8800', label: 'FOOD' },
   { type: 'charge', emoji: '⚡', color: '#ffff00', label: 'CHARGE' },
-  { type: 'meet',   emoji: '📍', color: '#ff00ff', label: 'MEET' },
+  { type: 'meet', emoji: '📍', color: '#ff00ff', label: 'MEET' },
 ];
 
-const MEET_POINTS = [
-  { emoji: '🎵', label: 'MAIN STAGE ENTRANCE' },
-  { emoji: '🏥', label: 'MEDICAL TENT 01' },
-  { emoji: '💧', label: 'CENTRAL WATER POINT' },
-  { emoji: '⛺', label: 'BASE CAMP // TENT ZONE A' },
-];
+const MAP_H = 360;
 
-const MAP_W = 358;
-const MAP_H = 270;
+function OfflineReadyBanner({ festivalId }: { festivalId: string }) {
+  const { packStatus, packProgress, setPackStatus, setPackProgress } = useOfflineMapStore();
+  const { festival } = useFestivalStore();
+  const status = packStatus[festivalId] ?? 'idle';
+  const progress = packProgress[festivalId] ?? 0;
+
+  async function handleDownload() {
+    setPackStatus(festivalId, 'downloading');
+    setPackProgress(festivalId, 0);
+    // Simulate download progress (real Mapbox offline download would go here)
+    for (let p = 0; p <= 100; p += 5) {
+      await new Promise((r) => setTimeout(r, 150));
+      setPackProgress(festivalId, p);
+    }
+    setPackStatus(festivalId, 'complete');
+  }
+
+  if (status === 'complete') {
+    return (
+      <View style={[bannerStyles.banner, { borderColor: colours.green }]}>
+        <Text style={[bannerStyles.dot, { color: colours.green }]}>⬤</Text>
+        <Text style={[bannerStyles.text, { color: colours.green }]}>MAP DOWNLOADED // OFFLINE READY</Text>
+      </View>
+    );
+  }
+
+  if (status === 'downloading') {
+    return (
+      <View style={[bannerStyles.banner, { borderColor: colours.cyan }]}>
+        <Text style={[bannerStyles.text, { color: colours.cyan }]}>DOWNLOADING... {Math.round(progress)}%</Text>
+        <View style={bannerStyles.progressTrack}>
+          <View style={[bannerStyles.progressFill, { width: `${progress}%` as any }]} />
+        </View>
+      </View>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <View style={[bannerStyles.banner, { borderColor: colours.red }]}>
+        <Text style={[bannerStyles.text, { color: colours.red }]}>NO MAP — CONNECT TO WIFI</Text>
+      </View>
+    );
+  }
+
+  return (
+    <TouchableOpacity style={[bannerStyles.banner, { borderColor: colours.orange }]} onPress={handleDownload} activeOpacity={0.8}>
+      <Text style={[bannerStyles.dot, { color: colours.orange }]}>⬤</Text>
+      <Text style={[bannerStyles.text, { color: colours.orange }]}>TAP TO DOWNLOAD MAP</Text>
+    </TouchableOpacity>
+  );
+}
+
+const bannerStyles = StyleSheet.create({
+  banner: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingVertical: 5,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dot: { fontSize: 8 },
+  text: {
+    fontFamily: 'ShareTechMono_400Regular',
+    fontSize: 9,
+    letterSpacing: 2,
+    flex: 1,
+  },
+  progressTrack: {
+    flex: 1,
+    height: 3,
+    backgroundColor: 'rgba(0,245,255,0.1)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 3,
+    backgroundColor: colours.cyan,
+    borderRadius: 2,
+  },
+});
 
 export function MapScreen() {
   const { festival } = useFestivalStore();
   const { pins, activePinType, addPin, removePin, setActivePinType } = usePinStore();
+  const { coords, status } = useLocationStore();
 
-  function handleMapTap(evt: any) {
-    const { locationX, locationY } = evt.nativeEvent;
-    const newPin: Pin = {
-      id: `pin_${Date.now()}`,
-      type: activePinType.type,
-      emoji: activePinType.emoji,
-      label: activePinType.label,
-      color: activePinType.color,
-      x: locationX / MAP_W,
-      y: locationY / MAP_H,
-      createdAt: Date.now(),
-      byUser: 'YOU',
-    };
-    addPin(newPin);
+  function handleMapTap(feature: any) {
+    try {
+      const [lng, lat] = feature.geometry.coordinates;
+      const newPin: Pin = {
+        id: `pin_${Date.now()}`,
+        type: activePinType.type,
+        emoji: activePinType.emoji,
+        label: activePinType.label,
+        color: activePinType.color,
+        x: 0,
+        y: 0,
+        lat,
+        lng,
+        createdAt: Date.now(),
+        byUser: 'YOU',
+      };
+      addPin(newPin);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
   }
+
+  const accuracy = coords?.accuracy ?? null;
+  const gpsStatus = !coords ? 'GPS OFF' : accuracy && accuracy < 20 ? 'GPS LOCKED' : 'GPS WEAK';
+  const gpsColor = !coords ? colours.red : accuracy && accuracy < 20 ? colours.green : colours.orange;
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <ScreenHeader
         title={`${festival.name} // MAP`}
         subtitle={festival.sub}
-        badgeLabel="GPS ON"
-        badgeColor={colours.green}
+        showGpsBadge={false}
+        badgeLabel={gpsStatus}
+        badgeColor={gpsColor}
       />
 
       <Text style={styles.pinHint}>DROP A PIN // TAP TYPE → TAP MAP</Text>
@@ -82,110 +176,89 @@ export function MapScreen() {
 
       {/* Festival map */}
       <View style={styles.mapContainer}>
-        <Svg
-          width="100%"
-          height={MAP_H}
-          viewBox={`0 0 ${MAP_W} ${MAP_H}`}
+        <OfflineMap
+          centerCoordinate={[festival.lng, festival.lat]}
+          zoomLevel={15}
           onPress={handleMapTap}
         >
-          <Rect width={MAP_W} height={MAP_H} fill="#030810" />
+          {/* Stage markers */}
+          <Mapbox.PointAnnotation id="main_stage" coordinate={[festival.lng - 0.002, festival.lat + 0.001]}>
+            <View style={[styles.stageMarker, { borderColor: colours.cyan }]}>
+              <Text style={styles.stageEmoji}>🎵</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          {/* Grid */}
-          {[67, 135, 202].map((y) => (
-            <Line key={`hy${y}`} x1={0} y1={y} x2={MAP_W} y2={y} stroke="rgba(0,245,255,0.03)" strokeWidth={1} />
-          ))}
-          {[90, 179, 268].map((x) => (
-            <Line key={`vx${x}`} x1={x} y1={0} x2={x} y2={MAP_H} stroke="rgba(0,245,255,0.03)" strokeWidth={1} />
-          ))}
+          <Mapbox.PointAnnotation id="techno_dome" coordinate={[festival.lng + 0.001, festival.lat + 0.003]}>
+            <View style={[styles.stageMarker, { borderColor: colours.magenta }]}>
+              <Text style={styles.stageEmoji}>🕺</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          {/* Perimeter */}
-          <Rect x={10} y={10} width={338} height={250} rx={8} fill="none" stroke="rgba(0,245,255,0.1)" strokeWidth={1} strokeDasharray="6,4" />
+          <Mapbox.PointAnnotation id="acid_arena" coordinate={[festival.lng - 0.001, festival.lat - 0.002]}>
+            <View style={[styles.stageMarker, { borderColor: colours.green }]}>
+              <Text style={styles.stageEmoji}>🧪</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          {/* Paths */}
-          <Path d="M68,128 L168,128 L168,152 L198,152 L198,198" stroke="rgba(255,255,255,0.05)" strokeWidth={10} fill="none" strokeLinecap="round" />
-          <Path d="M168,128 L238,98 L293,98" stroke="rgba(255,255,255,0.05)" strokeWidth={9} fill="none" strokeLinecap="round" />
-          <Path d="M168,128 L168,52 L198,38" stroke="rgba(255,255,255,0.04)" strokeWidth={7} fill="none" strokeLinecap="round" />
+          {/* POI: Medical tents (red pulsing) */}
+          <Mapbox.PointAnnotation id="med_01" coordinate={[festival.lng + 0.003, festival.lat - 0.001]}>
+            <View style={[styles.poiMarker, { borderColor: colours.red, backgroundColor: 'rgba(255,34,68,0.2)' }]}>
+              <Text style={styles.poiEmoji}>🏥</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          {/* Stages */}
-          <Rect x={18} y={78} width={88} height={52} rx={6} fill="rgba(0,245,255,0.06)" stroke={colours.cyan} strokeWidth={1.5} />
-          <Rect x={18} y={78} width={88} height={9} rx={6} fill="rgba(0,245,255,0.18)" />
-          <SvgText x={62} y={100} fill={colours.cyan} textAnchor="middle" fontSize={9} fontFamily="ShareTechMono_400Regular" fontWeight="bold">MAIN STAGE</SvgText>
-          <SvgText x={62} y={114} fill="rgba(0,245,255,0.5)" textAnchor="middle" fontSize={7} fontFamily="ShareTechMono_400Regular">CALVIN HARRIS 23:00</SvgText>
+          <Mapbox.PointAnnotation id="med_02" coordinate={[festival.lng - 0.003, festival.lat + 0.002]}>
+            <View style={[styles.poiMarker, { borderColor: colours.red, backgroundColor: 'rgba(255,34,68,0.2)' }]}>
+              <Text style={styles.poiEmoji}>🏥</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          <Rect x={152} y={20} width={88} height={52} rx={6} fill="rgba(255,0,255,0.05)" stroke={colours.magenta} strokeWidth={1.5} />
-          <Rect x={152} y={20} width={88} height={9} rx={6} fill="rgba(255,0,255,0.18)" />
-          <SvgText x={196} y={42} fill={colours.magenta} textAnchor="middle" fontSize={9} fontFamily="ShareTechMono_400Regular" fontWeight="bold">TECHNO DOME</SvgText>
-          <SvgText x={196} y={56} fill="rgba(255,0,255,0.5)" textAnchor="middle" fontSize={7} fontFamily="ShareTechMono_400Regular">CHARLOTTE 00:00</SvgText>
+          {/* POI: Water points (blue) */}
+          <Mapbox.PointAnnotation id="water_01" coordinate={[festival.lng, festival.lat - 0.003]}>
+            <View style={[styles.poiMarker, { borderColor: colours.blue, backgroundColor: 'rgba(68,136,255,0.2)' }]}>
+              <Text style={styles.poiEmoji}>💧</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          <Rect x={255} y={72} width={90} height={52} rx={6} fill="rgba(255,136,0,0.05)" stroke={colours.orange} strokeWidth={1.5} />
-          <Rect x={255} y={72} width={90} height={9} rx={6} fill="rgba(255,136,0,0.18)" />
-          <SvgText x={300} y={94} fill={colours.orange} textAnchor="middle" fontSize={9} fontFamily="ShareTechMono_400Regular" fontWeight="bold">ACID ARENA</SvgText>
-          <SvgText x={300} y={108} fill="rgba(255,136,0,0.5)" textAnchor="middle" fontSize={7} fontFamily="ShareTechMono_400Regular">HAWTIN 01:00</SvgText>
+          <Mapbox.PointAnnotation id="water_02" coordinate={[festival.lng + 0.002, festival.lat + 0.002]}>
+            <View style={[styles.poiMarker, { borderColor: colours.blue, backgroundColor: 'rgba(68,136,255,0.2)' }]}>
+              <Text style={styles.poiEmoji}>💧</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
-          <Rect x={100} y={145} width={74} height={40} rx={6} fill="rgba(0,255,136,0.04)" stroke={colours.green} strokeWidth={1} />
-          <SvgText x={137} y={163} fill={colours.green} textAnchor="middle" fontSize={8} fontFamily="ShareTechMono_400Regular">HALO STAGE</SvgText>
-          <SvgText x={137} y={176} fill="rgba(0,255,136,0.4)" textAnchor="middle" fontSize={7} fontFamily="ShareTechMono_400Regular">SARA LANDRY 02:00</SvgText>
-
-          {/* Campsites */}
-          <Rect x={18} y={198} width={108} height={58} rx={6} fill="rgba(255,255,80,0.02)" stroke="rgba(255,255,80,0.2)" strokeWidth={1} strokeDasharray="4,3" />
-          <SvgText x={72} y={223} fill="rgba(255,255,80,0.5)" textAnchor="middle" fontSize={8} fontFamily="ShareTechMono_400Regular">CAMPSITE A</SvgText>
-          <Rect x={140} y={198} width={100} height={58} rx={6} fill="rgba(255,255,80,0.02)" stroke="rgba(255,255,80,0.18)" strokeWidth={1} strokeDasharray="4,3" />
-          <SvgText x={190} y={223} fill="rgba(255,255,80,0.45)" textAnchor="middle" fontSize={8} fontFamily="ShareTechMono_400Regular">CAMPSITE B</SvgText>
-          <Rect x={254} y={198} width={92} height={58} rx={6} fill="rgba(255,255,80,0.02)" stroke="rgba(255,255,80,0.18)" strokeWidth={1} strokeDasharray="4,3" />
-          <SvgText x={300} y={223} fill="rgba(255,255,80,0.45)" textAnchor="middle" fontSize={8} fontFamily="ShareTechMono_400Regular">CAMPSITE C</SvgText>
-
-          {/* Medical */}
-          <Rect x={20} y={158} width={46} height={26} rx={4} fill="rgba(255,34,68,0.1)" stroke={colours.red} strokeWidth={1.5} />
-          <SvgText x={43} y={170} fill={colours.red} textAnchor="middle" fontSize={8} fontFamily="ShareTechMono_400Regular">✚ MED 01</SvgText>
-          <SvgText x={43} y={180} fill="rgba(255,34,68,0.45)" textAnchor="middle" fontSize={6} fontFamily="ShareTechMono_400Regular">24HR</SvgText>
-          <Rect x={290} y={145} width={55} height={26} rx={4} fill="rgba(255,34,68,0.1)" stroke={colours.red} strokeWidth={1.5} />
-          <SvgText x={317} y={157} fill={colours.red} textAnchor="middle" fontSize={8} fontFamily="ShareTechMono_400Regular">✚ MED 02</SvgText>
-
-          {/* Water */}
-          <Circle cx={238} cy={162} r={13} fill="rgba(0,80,255,0.1)" stroke="#4488ff" strokeWidth={1.5} />
-          <SvgText x={238} y={166} fill="#4488ff" textAnchor="middle" fontSize={10}>💧</SvgText>
-
-          {/* YOU */}
-          <Circle cx={168} cy={128} r={5} fill={colours.cyan} opacity={0.95} />
-          <Circle cx={168} cy={128} r={9} fill="none" stroke={colours.cyan} strokeWidth={1.5} opacity={0.55} />
-          <Circle cx={168} cy={128} r={18} fill="none" stroke={colours.cyan} strokeWidth={0.8} opacity={0.2} />
-          <SvgText x={176} y={122} fill={colours.cyan} fontSize={7} fontFamily="ShareTechMono_400Regular">YOU</SvgText>
-
-          {/* Squad */}
-          <Circle cx={212} cy={52} r={5} fill={colours.magenta} opacity={0.85} />
-          <SvgText x={219} y={49} fill={colours.magenta} fontSize={7} fontFamily="ShareTechMono_400Regular">SARAH</SvgText>
-          <Circle cx={108} cy={113} r={5} fill={colours.green} opacity={0.85} />
-          <SvgText x={115} y={110} fill={colours.green} fontSize={7} fontFamily="ShareTechMono_400Regular">MIKE</SvgText>
+          {/* POI: Campsites (yellow) */}
+          <Mapbox.PointAnnotation id="camp_a" coordinate={[festival.lng - 0.004, festival.lat - 0.003]}>
+            <View style={[styles.poiMarker, { borderColor: colours.yellow, backgroundColor: 'rgba(255,255,0,0.12)', borderStyle: 'dashed' }]}>
+              <Text style={styles.poiEmoji}>⛺</Text>
+            </View>
+          </Mapbox.PointAnnotation>
 
           {/* User pins */}
-          {pins.map((pin) => (
-            <G key={pin.id}>
-              <SvgText
-                x={pin.x * MAP_W}
-                y={pin.y * MAP_H}
-                textAnchor="middle"
-                fontSize={16}
-              >
-                {pin.emoji}
-              </SvgText>
-            </G>
-          ))}
+          {pins.map((pin) => {
+            const lat = (pin as any).lat ?? (festival.bounds.swLat + (1 - pin.y) * (festival.bounds.neLat - festival.bounds.swLat));
+            const lng = (pin as any).lng ?? (festival.bounds.swLng + pin.x * (festival.bounds.neLng - festival.bounds.swLng));
+            return (
+              <Mapbox.PointAnnotation key={pin.id} id={pin.id} coordinate={[lng, lat]}>
+                <View style={styles.userPin}>
+                  <Text style={{ fontSize: 20 }}>{pin.emoji}</Text>
+                </View>
+              </Mapbox.PointAnnotation>
+            );
+          })}
+        </OfflineMap>
 
-          <SvgText x={12} y={267} fill="rgba(0,245,255,0.25)" fontSize={6} fontFamily="ShareTechMono_400Regular">
-            LAT: {festival.lat.toFixed(4)} // LNG: {festival.lng.toFixed(4)} // TAP TO DROP PIN
-          </SvgText>
-        </Svg>
+        {/* Offline ready banner */}
+        <OfflineReadyBanner festivalId={festival.id} />
 
-        {/* Overlays */}
-        <View style={styles.mapOffline}>
-          <Text style={styles.mapOfflineText}>⬤ OFFLINE READY</Text>
-        </View>
+        {/* Map label */}
         <View style={styles.mapLabel}>
           <Text style={styles.mapLabelText}>{festival.mapLabel}</Text>
         </View>
+
+        {/* Active pin indicator */}
         <View style={styles.pinIndicator}>
           <Text style={styles.pinIndicatorText}>
-            {activePinType.emoji} TAP MAP TO PIN {activePinType.label.toUpperCase()}
+            {activePinType.emoji} TAP MAP → PIN {activePinType.label}
           </Text>
         </View>
       </View>
@@ -193,7 +266,7 @@ export function MapScreen() {
       {/* Pins list */}
       <GlassPanel title="SQUAD PINS // LIVE FEED" style={{ marginTop: 12 }}>
         {pins.length === 0 ? (
-          <Text style={styles.noPins}>NO PINS YET // TAP MAP ABOVE</Text>
+          <Text style={styles.noPins}>NO PINS YET // TAP THE MAP ABOVE</Text>
         ) : (
           pins.map((pin) => (
             <View key={pin.id} style={styles.pinRow}>
@@ -219,7 +292,12 @@ export function MapScreen() {
 
       {/* Meet me */}
       <GlassPanel title="MEET ME HERE // BROADCAST">
-        {MEET_POINTS.map((mp) => (
+        {[
+          { emoji: '🎵', label: 'MAIN STAGE ENTRANCE' },
+          { emoji: '🏥', label: 'MEDICAL TENT 01' },
+          { emoji: '💧', label: 'CENTRAL WATER POINT' },
+          { emoji: '⛺', label: 'BASE CAMP // TENT ZONE A' },
+        ].map((mp) => (
           <TouchableOpacity key={mp.label} style={styles.meetBtn} activeOpacity={0.8}>
             <Text style={styles.meetEmoji}>{mp.emoji}</Text>
             <Text style={styles.meetLabel}>{mp.label}</Text>
@@ -232,7 +310,7 @@ export function MapScreen() {
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
+  scroll: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: 16 },
   pinHint: {
     paddingHorizontal: 16,
@@ -268,18 +346,6 @@ const styles = StyleSheet.create({
     height: MAP_H,
     backgroundColor: '#03080f',
   },
-  mapOffline: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderWidth: 1,
-    borderColor: colours.green,
-    borderRadius: 20,
-    paddingVertical: 3,
-    paddingHorizontal: 12,
-  },
-  mapOfflineText: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, color: colours.green, letterSpacing: 2 },
   mapLabel: {
     position: 'absolute',
     bottom: 8,
@@ -294,9 +360,8 @@ const styles = StyleSheet.create({
   mapLabelText: { fontFamily: 'ShareTechMono_400Regular', fontSize: 7, color: colours.dim },
   pinIndicator: {
     position: 'absolute',
-    top: 8,
-    left: '50%',
-    transform: [{ translateX: -80 }],
+    bottom: 8,
+    left: 8,
     backgroundColor: 'rgba(0,245,255,0.1)',
     borderWidth: 1,
     borderColor: 'rgba(0,245,255,0.35)',
@@ -304,8 +369,33 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 14,
   },
-  pinIndicatorText: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, color: colours.cyan, letterSpacing: 2 },
-  noPins: { fontFamily: 'ShareTechMono_400Regular', fontSize: 9, color: colours.dim, textAlign: 'center', paddingVertical: 10, letterSpacing: 1 },
+  pinIndicatorText: { fontFamily: 'ShareTechMono_400Regular', fontSize: 8, color: colours.cyan, letterSpacing: 1 },
+  stageMarker: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stageEmoji: { fontSize: 16 },
+  poiMarker: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  poiEmoji: { fontSize: 14 },
+  userPin: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noPins: { fontFamily: 'ShareTechMono_400Regular', fontSize: 9, color: colours.dim, textAlign: 'center', paddingVertical: 16, letterSpacing: 1 },
   pinRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(0,245,255,0.05)' },
   pinEmoji: { fontSize: 17 },
   pinInfo: { flex: 1 },

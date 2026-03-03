@@ -1,12 +1,16 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Animated, Easing
+  Animated, Easing, PanResponder, Modal
 } from 'react-native';
+import Svg, { Circle as SvgCircle, G } from 'react-native-svg';
 import { colours } from '../theme/colours';
 import { GlassPanel } from '../components/GlassPanel';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { useSOSStore } from '../stores/sosStore';
+import { meshService } from '../services/MeshService';
+import { useLocationStore } from '../stores/locationStore';
+import * as Haptics from 'expo-haptics';
 
 const WHAT_HAPPENS = [
   '📍 GPS coords broadcast instantly',
@@ -14,6 +18,8 @@ const WHAT_HAPPENS = [
   '🔴 Squad alerted immediately',
   '🏥 Medical teams notified',
 ];
+
+const HOLD_DURATION = 3000;
 
 function PulseRing({ size, delay, color }: { size: number; delay: number; color: string }) {
   const scale = useRef(new Animated.Value(0.8)).current;
@@ -52,97 +58,227 @@ function PulseRing({ size, delay, color }: { size: number; delay: number; color:
   );
 }
 
-export function SOSScreen() {
-  const { active, trigger, cancel } = useSOSStore();
-  const sosGlow = useRef(new Animated.Value(0)).current;
+/** Circular SVG progress ring drawn around the SOS button while held */
+function HoldProgressRing({ progress }: { progress: Animated.Value }) {
+  const RADIUS = 84;
+  const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+  const AnimatedSvgCircle = Animated.createAnimatedComponent(SvgCircle);
+
+  return (
+    <Svg
+      width={200}
+      height={200}
+      viewBox="0 0 200 200"
+      style={{ position: 'absolute' }}
+    >
+      <G rotation="-90" origin="100,100">
+        {/* Track */}
+        <SvgCircle
+          cx={100}
+          cy={100}
+          r={RADIUS}
+          stroke="rgba(255,34,68,0.15)"
+          strokeWidth={4}
+          fill="none"
+        />
+        {/* Progress */}
+        <AnimatedSvgCircle
+          cx={100}
+          cy={100}
+          r={RADIUS}
+          stroke={colours.red}
+          strokeWidth={4}
+          fill="none"
+          strokeDasharray={`${CIRCUMFERENCE}`}
+          strokeDashoffset={progress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [CIRCUMFERENCE, 0],
+          })}
+          strokeLinecap="round"
+        />
+      </G>
+    </Svg>
+  );
+}
+
+function SOSActivatedOverlay({ onCancel }: { onCancel: () => void }) {
+  const pulse = useRef(new Animated.Value(0.95)).current;
+  const { coords } = useLocationStore();
 
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(sosGlow, { toValue: 1, duration: 1250, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(sosGlow, { toValue: 0, duration: 1250, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(pulse, { toValue: 1.0, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.95, duration: 800, useNativeDriver: true }),
       ])
     ).start();
   }, []);
 
-  const sosBoxShadow = sosGlow.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(255,34,68,0.25)', 'rgba(255,34,68,0.55)'],
-  });
+  const lat = coords?.latitude?.toFixed(4) ?? '---';
+  const lng = coords?.longitude?.toFixed(4) ?? '---';
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <ScreenHeader
-        title="EMERGENCY SOS"
-        subtitle="MESH BROADCAST // ALL NEARBY USERS"
-        titleColor={colours.red}
-      />
+    <Modal visible transparent animationType="fade">
+      <Animated.View style={[overlayStyles.overlay, { transform: [{ scale: pulse }] }]}>
+        <Text style={overlayStyles.title}>🆘 SOS ACTIVE</Text>
+        <Text style={overlayStyles.subtitle}>BROADCASTING YOUR LOCATION</Text>
+        <View style={overlayStyles.infoBox}>
+          <Text style={overlayStyles.infoLine}>GPS: {lat}, {lng}</Text>
+          <Text style={overlayStyles.infoLine}>MESH HOPS: <Text style={{ color: colours.cyan }}>ACTIVE</Text></Text>
+          <Text style={overlayStyles.infoLine}>SQUAD: <Text style={{ color: colours.green }}>✓ NOTIFIED</Text></Text>
+        </View>
+        <TouchableOpacity style={overlayStyles.cancelBtn} onPress={onCancel} activeOpacity={0.85}>
+          <Text style={overlayStyles.cancelBtnText}>✓ I'M SAFE — CANCEL SOS</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </Modal>
+  );
+}
 
-      {!active ? (
-        <>
-          <Text style={styles.sosInstructions}>
-            HOLD 3 SECONDS // BROADCASTS VIA MESH{'\n'}NO SIGNAL REQUIRED // ALL NEARBY PHONES
-          </Text>
+const overlayStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(200,0,0,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 20,
+  },
+  title: {
+    fontFamily: 'Orbitron_900Black',
+    fontSize: 36,
+    color: '#fff',
+    letterSpacing: 4,
+  },
+  subtitle: {
+    fontFamily: 'ShareTechMono_400Regular',
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.8)',
+    letterSpacing: 3,
+    textAlign: 'center',
+  },
+  infoBox: {
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 12,
+    padding: 16,
+    gap: 8,
+    alignSelf: 'stretch',
+  },
+  infoLine: {
+    fontFamily: 'ShareTechMono_400Regular',
+    fontSize: 11,
+    color: '#fff',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  cancelBtn: {
+    backgroundColor: 'rgba(0,255,136,0.15)',
+    borderWidth: 2,
+    borderColor: colours.green,
+    borderRadius: 14,
+    padding: 18,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    fontFamily: 'Orbitron_700Bold',
+    fontSize: 13,
+    letterSpacing: 3,
+    color: colours.green,
+  },
+});
 
-          {/* SOS Button with rings */}
-          <View style={styles.sosBtnWrap}>
-            <PulseRing size={190} delay={0} color={`${colours.red}40`} />
-            <PulseRing size={190} delay={700} color={`${colours.red}28`} />
+export function SOSScreen() {
+  const { active, trigger, cancel } = useSOSStore();
+  const { coords } = useLocationStore();
+  const holdProgress = useRef(new Animated.Value(0)).current;
+  const holdAnimation = useRef<Animated.CompositeAnimation | null>(null);
+  const [isHolding, setIsHolding] = useState(false);
 
-            <TouchableOpacity
-              style={styles.sosBtn}
-              onPress={trigger}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.sosBtnText}>SOS</Text>
-              <Text style={styles.sosBtnSub}>HOLD 3s</Text>
-            </TouchableOpacity>
-          </View>
+  function startHold() {
+    setIsHolding(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    holdAnimation.current = Animated.timing(holdProgress, {
+      toValue: 1,
+      duration: HOLD_DURATION,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    });
+    holdAnimation.current.start(({ finished }) => {
+      if (finished) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        trigger();
+        meshService.sendSOS('MEDICAL EMERGENCY // ASSISTANCE REQUIRED');
+        setIsHolding(false);
+        holdProgress.setValue(0);
+      }
+    });
+  }
 
-          <GlassPanel title="WHAT HAPPENS" style={{ width: '100%', marginHorizontal: 16 }}>
-            {WHAT_HAPPENS.map((line) => (
-              <View key={line} style={styles.whatRow}>
-                <Text style={styles.whatText}>{line}</Text>
-              </View>
-            ))}
-          </GlassPanel>
+  function cancelHold() {
+    holdAnimation.current?.stop();
+    holdProgress.setValue(0);
+    setIsHolding(false);
+  }
 
-          <TouchableOpacity style={styles.okayBtn} activeOpacity={0.8}>
-            <Text style={styles.okayBtnText}>✅ BROADCAST I'M OKAY</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <View style={styles.sosSentWrap}>
-          <Text style={styles.sosSentTitle}>SOS SENT</Text>
+  function handleCancel() {
+    cancel();
+    meshService.broadcastVibe('SOS_CANCEL', 0);
+  }
 
-          <View style={styles.sosSentRings}>
-            <PulseRing size={160} delay={0} color={colours.red} />
-            <PulseRing size={160} delay={350} color={colours.red} />
-            <Text style={styles.sosSentIcon}>🆘</Text>
-          </View>
+  return (
+    <>
+      {active && <SOSActivatedOverlay onCancel={handleCancel} />}
 
-          <View style={styles.sosSentInfo}>
-            <Text style={styles.sosSentLine}>YOUR LOCATION IS BROADCASTING</Text>
-            <Text style={[styles.sosSentLine, { color: colours.green }]}>GPS: 53.3498, -2.7280</Text>
-            <Text style={styles.sosSentLine}>
-              MESH HOPS: <Text style={{ color: colours.cyan }}>7 NODES</Text>
-            </Text>
-            <Text style={styles.sosSentLine}>
-              SQUAD: <Text style={{ color: colours.green }}>✓ NOTIFIED</Text>
-            </Text>
-          </View>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScreenHeader
+          title="EMERGENCY SOS"
+          subtitle="MESH BROADCAST // ALL NEARBY USERS"
+          titleColor={colours.red}
+          showGpsBadge={false}
+        />
 
-          <TouchableOpacity style={styles.cancelBtn} onPress={cancel} activeOpacity={0.8}>
-            <Text style={styles.cancelBtnText}>✓ I'M SAFE — CANCEL SOS</Text>
+        <Text style={styles.sosInstructions}>
+          HOLD 3 SECONDS // BROADCASTS VIA MESH{'\n'}NO SIGNAL REQUIRED // ALL NEARBY PHONES
+        </Text>
+
+        {/* SOS Button with hold progress ring */}
+        <View style={styles.sosBtnWrap}>
+          <PulseRing size={200} delay={0} color={`${colours.red}40`} />
+          <PulseRing size={200} delay={700} color={`${colours.red}28`} />
+
+          {isHolding && <HoldProgressRing progress={holdProgress} />}
+
+          <TouchableOpacity
+            style={[styles.sosBtn, isHolding && styles.sosBtnHolding]}
+            onPressIn={startHold}
+            onPressOut={cancelHold}
+            activeOpacity={0.85}
+            delayLongPress={100}
+          >
+            <Text style={styles.sosBtnText}>SOS</Text>
+            <Text style={styles.sosBtnSub}>{isHolding ? 'HOLD...' : 'HOLD 3s'}</Text>
           </TouchableOpacity>
         </View>
-      )}
-    </ScrollView>
+
+        <GlassPanel title="WHAT HAPPENS">
+          {WHAT_HAPPENS.map((line) => (
+            <View key={line} style={styles.whatRow}>
+              <Text style={styles.whatText}>{line}</Text>
+            </View>
+          ))}
+        </GlassPanel>
+
+        <TouchableOpacity style={styles.okayBtn} activeOpacity={0.8}>
+          <Text style={styles.okayBtnText}>✅ BROADCAST I'M OKAY</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
+  scroll: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: 24, alignItems: 'center' },
   sosInstructions: {
     textAlign: 'center',
@@ -155,8 +291,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   sosBtnWrap: {
-    width: 200,
-    height: 200,
+    width: 210,
+    height: 210,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 24,
@@ -170,6 +306,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,34,68,0.10)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  sosBtnHolding: {
+    backgroundColor: 'rgba(255,34,68,0.25)',
   },
   sosBtnText: {
     fontFamily: 'Orbitron_700Bold',
@@ -199,33 +338,4 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   okayBtnText: { fontFamily: 'Orbitron_700Bold', fontSize: 11, letterSpacing: 3, color: colours.green },
-  sosSentWrap: { alignItems: 'center', gap: 20, paddingTop: 14, paddingHorizontal: 16 },
-  sosSentTitle: {
-    fontFamily: 'Orbitron_700Bold',
-    fontSize: 22,
-    color: colours.red,
-    letterSpacing: 4,
-  },
-  sosSentRings: { width: 160, height: 160, alignItems: 'center', justifyContent: 'center' },
-  sosSentIcon: { fontSize: 36 },
-  sosSentInfo: { alignItems: 'center', gap: 4 },
-  sosSentLine: {
-    fontFamily: 'ShareTechMono_400Regular',
-    fontSize: 10,
-    color: colours.text,
-    lineHeight: 22,
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  cancelBtn: {
-    marginTop: 8,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,255,136,0.35)',
-    backgroundColor: 'rgba(0,255,136,0.07)',
-    alignItems: 'center',
-    alignSelf: 'stretch',
-  },
-  cancelBtnText: { fontFamily: 'Orbitron_700Bold', fontSize: 11, letterSpacing: 3, color: colours.green },
 });
